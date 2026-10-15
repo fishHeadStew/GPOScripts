@@ -1,37 +1,20 @@
-#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+Restore values from a recorded local snapshot.
+.DESCRIPTION
+This script does not create inverse security settings. The shared module validates the snapshot and target.
+#>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [string]$Path
+)
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Rollback-dotNetUseSchannel-Log.txt"
-Start-Transcript -Path $DefaultLogLocation
-
-# This sets the registry to disable .net use of Windows SCHANNEL configuration instead of the native .net TLS configuration on the local system
-#  A reboot is required for this to take effect
-
-$response = Read-Host "This sets the registry to disable .net use of Windows SCHANNEL configuration instead of the native .net TLS configuration on the local system. Would you like to make the required registry changes? (Yes/No)"
-If (($response -eq 'Y')  -or ($response -eq "Yes")){
-    New-Item -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v2.0.50727" -Force
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v2.0.50727" -Name "SystemDefaultTlsVersions" -Value 0
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v2.0.50727" -Name "SchUseStrongCrypto" -Value 0
-
-    New-Item -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" -Force
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" -Name "SystemDefaultTlsVersions" -Value 0
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319" -Name "SchUseStrongCrypto" -Value 0
-
-    New-Item -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v2.0.50727" -Force
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v2.0.50727" -Name "SystemDefaultTlsVersions" -Value 0
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v2.0.50727" -Name "SchUseStrongCrypto" -Value 0
-
-    New-Item -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" -Force
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" -Name "SystemDefaultTlsVersions" -Value 0
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319" -Name "SchUseStrongCrypto" -Value 0
-
-    $rebootResponse = Read-Host "The registry changes have been made. A reboot is required before they will take effect. Do you want to reboot now? (Yes/No)"
-    If (($rebootResponse -eq 'Y') -or ($rebootResponse -eq "Yes")){
-        shutdown /g /c " Disable .net use of Windows SCHANNEL configuration instead of the native .net TLS configuration" /d P:2:4
-    } Else {
-        Read-Host "The system will need to reboot before the changes will take effect."
-    }
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw 'Restoration requires -Path with a recorded snapshot.'
 }
-
-#Stop logging
-Stop-Transcript
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$arguments = @{ Path = $Path }
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+Restore-GpoLocalState @arguments

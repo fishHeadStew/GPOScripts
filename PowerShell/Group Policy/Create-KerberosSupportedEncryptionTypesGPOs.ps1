@@ -1,27 +1,59 @@
-#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+Show control definitions. Creating an unlinked Group Policy object requires -Create.
+.DESCRIPTION
+The caller must select the domain, server, name, role, version, and backup directory.
+The shared module backs up existing objects before an explicitly requested update.
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Create-KerberosSupportedEncryptionTypesGPOs-Log.txt"
-Start-Transcript -Path $DefaultLogLocation
+#>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [switch]$Create,
+    [string]$Name,
+    [string]$Domain,
+    [string]$Server,
+    [ValidateSet('2016', '2019', '2022', '2025')]
+    [string]$TargetVersion,
+    [ValidateSet('MemberServer', 'DomainController')]
+    [string]$Role,
+    [string]$BackupDirectory,
+    [switch]$UpdateExisting,
+    [switch]$AcceptCompatibilityRisk
+)
 
-# This creates two Group Policy Objects (GPO's)
-#  GPO  1 sets the registry to Enforce AES Only Encryption Types
-#  GPO  2 sets the registry to Disable Enforce AES Only Encryption Types
-
-# Import the Group Policy Module
-Import-Module GroupPolicy
-
-# Create GPO 1
-New-GPO -Name "PROD | Enforce AES Only Encryption Types for Kerberos" -Comment "Sets enforcement of AES Only Encryption Types for Kerberos"
-
-# Set GPO 1
-Set-GPPrefRegistryValue -Name "PROD | Enforce AES Only Encryption Types for Kerberos" -Context Computer -Key "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters" -ValueName "SupportedEncryptionTypes" -Value 0x7ffffff8 -Type "DWORD" -Order 1 -Action "Update"
-
-# Create Rollback GPO 1
-New-GPO -Name "Rollback | Enforce AES Only Encryption Types for Kerberos" -Comment "Rolls back enforcement of AES Only Encryption Types for Kerberos"
-
-# Set Rollback GPO 1
-Set-GPPrefRegistryValue -Name "Rollback | Enforce AES Only Encryption Types for Kerberos" -Context Computer -Key "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters" -ValueName "SupportedEncryptionTypes" -Value 0x7fffffff -Type "DWORD" -Order 1 -Action "Update"
-
-#Stop logging
-Stop-Transcript
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$controlIds = @('KerberosAesAllowed')
+if (-not $Create) {
+    Get-GpoControl -Id $controlIds
+    return
+}
+foreach ($required in @('Name', 'Domain', 'Server', 'TargetVersion', 'Role', 'BackupDirectory')) {
+    if ([string]::IsNullOrWhiteSpace([string]$PSBoundParameters[$required])) {
+        throw "Creating a Group Policy object requires -$required."
+    }
+}
+$builds = @{ '2016' = 14393; '2019' = 17763; '2022' = 20348; '2025' = 26100 }
+$targetBuild = $builds[$TargetVersion]
+$definitions = @(Get-GpoControl -Id $controlIds)
+$selectedControls = @($definitions | Where-Object {
+    $_.Roles -contains $Role -and $_.MinBuild -le $targetBuild -and
+    (-not $_.ContainsKey('MaxBuild') -or $_.MaxBuild -ge $targetBuild)
+})
+if ($selectedControls.Count -eq 0) {
+    throw 'No controls in this wrapper apply to the selected role and version.'
+}
+$arguments = @{
+    Name = $Name
+    Id = @($selectedControls | ForEach-Object { $_.Id })
+    Domain = $Domain
+    Server = $Server
+    TargetVersion = $TargetVersion
+    Role = $Role
+    BackupDirectory = $BackupDirectory
+    UpdateExisting = $UpdateExisting
+    AcceptCompatibilityRisk = $AcceptCompatibilityRisk
+}
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+New-GpoConfiguration @arguments

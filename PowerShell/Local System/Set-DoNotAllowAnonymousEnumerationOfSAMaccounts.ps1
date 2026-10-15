@@ -1,25 +1,32 @@
-#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+Assess the selected control. Changes require -Apply and a backup directory.
+.DESCRIPTION
+The shared module saves the original state before changes. The script never restarts Windows.
+Use -WhatIf to preview an explicitly requested change.
+#>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [switch]$Apply,
+    [string]$BackupDirectory,
+    [switch]$AcceptCompatibilityRisk
+)
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Set-DoNotAllowAnonymousEnumerationOfSAMaccounts-Log.txt"
-Start-Transcript -Path $DefaultLogLocation
-
-# This sets the registry to not allow anonymous enumeration of Security Account Manager (SAM) accounts on the local system
-#  A reboot is required for this to take effect
-
-$response = Read-Host "This sets the registry to not allow anonymous enumeration of Security Account Manager (SAM) accounts on the local system. Would you like to make the required registry changes? (Yes/No)"
-
-If (($response -eq 'Y')  -or ($response -eq "Yes")){
-    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\LSA" -Force
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\LSA" -Name "RestrictAnonymous" -Value 1
-
-    $rebootResponse = Read-Host "The registry changes have been made. A reboot is required before they will take effect. Do you want to reboot now? (Yes/No)"
-    If (($rebootResponse -eq 'Y') -or ($rebootResponse -eq "Yes")){
-        shutdown /g /c "Set do not allow annonymous enumeration of SAM accounts" /d P:2:4
-    } Else {
-        Read-Host "The system will need to reboot before the changes will take effect."
-    }
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$controlIds = @('AnonymousSamEnumerationBlocked')
+if (-not $Apply) {
+    Get-GpoAssessment -Id $controlIds
+    return
 }
-
-#Stop logging
-Stop-Transcript
+if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
+    throw 'Changes require -BackupDirectory.'
+}
+$arguments = @{
+    Id = $controlIds
+    BackupDirectory = $BackupDirectory
+    AcceptCompatibilityRisk = $AcceptCompatibilityRisk
+}
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+Invoke-GpoLocalApply @arguments

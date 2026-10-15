@@ -1,0 +1,6 @@
+TestResults/
+*.nupkg
+*.zip
+recovery/
+reports/
+test-tools/
