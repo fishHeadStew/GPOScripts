@@ -1,0 +1,23 @@
+name: PowerShell validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned test dependency
+        shell: pwsh
+        run: |
+          Save-Module -Name Pester -RequiredVersion 5.7.1 -Path "$env:RUNNER_TEMP/modules" -Repository PSGallery -Force
+      - name: Run isolated tests
+        shell: ${{ matrix.shell }}
+        run: |
+          ./Tests/Invoke-Tests.ps1 -PesterPath "$env:RUNNER_TEMP/modules/Pester/5.7.1/Pester.psd1"

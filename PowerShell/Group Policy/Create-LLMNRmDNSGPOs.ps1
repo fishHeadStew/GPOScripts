@@ -1,45 +1,59 @@
-#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+Show control definitions. Creating an unlinked Group Policy object requires -Create.
+.DESCRIPTION
+The caller must select the domain, server, name, role, version, and backup directory.
+The shared module backs up existing objects before an explicitly requested update.
+Multicast DNS requires a separate firewall review. This wrapper changes only Link-Local Multicast Name Resolution.
+#>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [switch]$Create,
+    [string]$Name,
+    [string]$Domain,
+    [string]$Server,
+    [ValidateSet('2016', '2019', '2022', '2025')]
+    [string]$TargetVersion,
+    [ValidateSet('MemberServer', 'DomainController')]
+    [string]$Role,
+    [string]$BackupDirectory,
+    [switch]$UpdateExisting,
+    [switch]$AcceptCompatibilityRisk
+)
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Create-LLMNRmDNS-Log.txt"
-Start-Transcript -Path $DefaultLogLocation
-
-# This creates four Group Policy Objects (GPO's)
-#  GPO  1 sets the registry to Disable Link-Local Multicast Name Resolution (LLMNR)
-#  GPO  2 sets the registry to Disable Multicast Dynamic Name Resolution (mDNS)
-#  GPO  3 sets the registry to Enable LLMNR as a rollback for if GPO 5 creates issues in the environment
-#  GPO  4 sets the registry to Enable Multicast Dynamic Name Resolution (mDNS)
-
-# Import the Group Policy Module
-Import-Module GroupPolicy
-
-# Create GPO 1
-New-GPO -Name "PROD | Disable LLMNR" -Comment "Disables LLMNR via the registry"
-
-# Set GPO 1
-Set-GPPrefRegistryValue -Name "PROD | Disable LLMNR" -Context Computer -Key "HKLM\Software\policies\Microsoft\Windows NT\DNSClient" -Order 1 -Action "Update"
-Set-GPPrefRegistryValue -Name "PROD | Disable LLMNR" -Context Computer -Key "HKLM\Software\policies\Microsoft\Windows NT\DNSClient" -ValueName "EnableMulticast" -Value 0 -Type "DWORD" -Order 1 -Action "Update"
-
-# Create GPO 2
-New-GPO -Name "PROD | Disable mDNS" -Comment "Disables mDNS via the registry"
-
-# Set GPO 2
-Set-GPPrefRegistryValue -Name "PROD | Disable mDNS" -Context Computer -Key "HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Order 1 -Action "Update"
-Set-GPPrefRegistryValue -Name "PROD | Disable mDNS" -Context Computer -Key "HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -ValueName "EnableMDNS" -Value 0 -Type "DWORD" -Order 2 -Action "Update"
-
-# Create Rollback GPO 3
-New-GPO -Name "Rollback | Disable LLMNR" -Comment "Enables LLMNR via the registry"
-
-# Set Rollback GPO 3
-Set-GPPrefRegistryValue -Name "Rollback | Disable LLMNR" -Context Computer -Key "HKLM\Software\policies\Microsoft\Windows NT\DNSClient" -Order 1 -Action "Update"
-Set-GPPrefRegistryValue -Name "Rollback | Disable LLMNR" -Context Computer -Key "HKLM\Software\policies\Microsoft\Windows NT\DNSClient" -ValueName "EnableMulticast" -Value 1 -Type "DWORD" -Order 1 -Action "Update"
-
-# Create Rollback GPO 4
-New-GPO -Name "Rollback | Disable mDNS" -Comment "Enables mDNS via the registry"
-
-# Set Rollback GPO 4
-Set-GPPrefRegistryValue -Name "Rollback | Disable mDNS" -Context Computer -Key "HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Order 1 -Action "Update"
-Set-GPPrefRegistryValue -Name "Rollback | Disable mDNS" -Context Computer -Key "HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -ValueName "EnableMDNS" -Value 1 -Type "DWORD" -Order 2 -Action "Update"
-
-#Stop logging
-Stop-Transcript
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$controlIds = @('LlmnrDisabled')
+if (-not $Create) {
+    Get-GpoControl -Id $controlIds
+    return
+}
+foreach ($required in @('Name', 'Domain', 'Server', 'TargetVersion', 'Role', 'BackupDirectory')) {
+    if ([string]::IsNullOrWhiteSpace([string]$PSBoundParameters[$required])) {
+        throw "Creating a Group Policy object requires -$required."
+    }
+}
+$builds = @{ '2016' = 14393; '2019' = 17763; '2022' = 20348; '2025' = 26100 }
+$targetBuild = $builds[$TargetVersion]
+$definitions = @(Get-GpoControl -Id $controlIds)
+$selectedControls = @($definitions | Where-Object {
+    $_.Roles -contains $Role -and $_.MinBuild -le $targetBuild -and
+    (-not $_.ContainsKey('MaxBuild') -or $_.MaxBuild -ge $targetBuild)
+})
+if ($selectedControls.Count -eq 0) {
+    throw 'No controls in this wrapper apply to the selected role and version.'
+}
+$arguments = @{
+    Name = $Name
+    Id = @($selectedControls | ForEach-Object { $_.Id })
+    Domain = $Domain
+    Server = $Server
+    TargetVersion = $TargetVersion
+    Role = $Role
+    BackupDirectory = $BackupDirectory
+    UpdateExisting = $UpdateExisting
+    AcceptCompatibilityRisk = $AcceptCompatibilityRisk
+}
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+New-GpoConfiguration @arguments

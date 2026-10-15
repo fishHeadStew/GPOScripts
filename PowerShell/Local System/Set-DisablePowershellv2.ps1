@@ -1,43 +1,32 @@
-#Requires -RunAsAdministrator
-
-<# 
+<#
 .SYNOPSIS
-
-This script will disable the PowerShell v2 Engine on any windows version where it is an optional feature.
-
+Assess the selected control. Changes require -Apply and a backup directory.
 .DESCRIPTION
-
-This script will disable the PowerShell v2 Engine on any windows version where it is an optional feature.
-
-Script flow:
-- Check the current OS version.
-    - Check if PowerShell v2 is enabled and if so disable.
-
-Script log data saved to: C:\Windows\Logs\Disable-PowerShellv2.txt
-
-This script is designed to be run locally and will not work as a Startup/Shutdown script.
-Disable-WindowsOptionalFeature does not work correctly when used as a startup script.
-
-Script Name: Set-Disable-PowerShellv2.ps1
-Parameters: -ExecutionPolicy Bypass -NonInteractive -NoProfile
-
-.EXAMPLE
-
-C:\PS> powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowsStyle Hidden .\Set-Disable-PowerShellv2.ps1
-
+The shared module saves the original state before changes. The script never restarts Windows.
+Use -WhatIf to preview an explicitly requested change.
 #>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [switch]$Apply,
+    [string]$BackupDirectory,
+    [switch]$AcceptCompatibilityRisk
+)
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Disable-PowerShellv2.txt"
-Start-Transcript -Path $DefaultLogLocation
-
-# Get the Current PowerShell v2 status
-$CurrentStatus = (Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellv2)
-
-# Check if PowerShell v2 is enabled and if so disable
-if ($CurrentStatus.State -eq 'Enabled') {
-    Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellv2 -NoRestart
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$controlIds = @('PowerShell2Disabled')
+if (-not $Apply) {
+    Get-GpoAssessment -Id $controlIds
+    return
 }
-
-#Stop logging
-Stop-Transcript
+if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
+    throw 'Changes require -BackupDirectory.'
+}
+$arguments = @{
+    Id = $controlIds
+    BackupDirectory = $BackupDirectory
+    AcceptCompatibilityRisk = $AcceptCompatibilityRisk
+}
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+Invoke-GpoLocalApply @arguments

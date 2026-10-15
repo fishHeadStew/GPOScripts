@@ -1,25 +1,20 @@
-#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+Restore values from a recorded local snapshot.
+.DESCRIPTION
+This script does not create inverse security settings. The shared module validates the snapshot and target.
+#>
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [string]$Path
+)
 
-# Start logging
-$DefaultLogLocation = "C:\Windows\Logs\Rollback-TLSCipherSuiteOrder-Log.txt"
-Start-Transcript -Path $DefaultLogLocation
-
-# This sets the registry to set the default cipher suite order on the local system
-#  A reboot is required for this to take effect
-
-$response = Read-Host "This sets the registry to set the default cipher suite order on the local system. Would you like to make the required registry changes? (Yes/No)"
-If (($response -eq 'Y')  -or ($response -eq "Yes")){
-
-    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002" -Force
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002" -Name "Functions"
-
-    $rebootResponse = Read-Host "The registry changes have been made. A reboot is required before they will take effect. Do you want to reboot now? (Yes/No)"
-    If (($rebootResponse -eq 'Y') -or ($rebootResponse -eq "Yes")){
-        shutdown /g /c "Set the cipher suite order" /d P:2:4
-    } Else {
-        Read-Host "The system will need to reboot before the changes will take effect."
-    }
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw 'Restoration requires -Path with a recorded snapshot.'
 }
-
-#Stop logging
-Stop-Transcript
+Import-Module (Join-Path $PSScriptRoot '..\GPOScripts\GPOScripts.psd1') -ErrorAction Stop
+$arguments = @{ Path = $Path }
+if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters['WhatIf'] }
+if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters['Confirm'] }
+Restore-GpoLocalState @arguments
